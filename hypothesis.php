@@ -13,16 +13,21 @@
 // Exit if called directly.
 defined( 'ABSPATH' ) or die( 'Cannot access pages directly.' );
 
-// Load textdomain
-function hypothesis_load_plugin_textdomain() {
-    load_plugin_textdomain( 'hypothesis', FALSE, basename( dirname( __FILE__ ) ) . '/languages/' );
-}
-add_action( 'plugins_loaded', 'hypothesis_load_plugin_textdomain' );
+add_action( 'plugins_loaded', array( 'HypothesisSettingsPage', 'init' ) );
 
 /**
  * Create settings page (see https://codex.wordpress.org/Creating_Options_Pages)
  */
 class HypothesisSettingsPage {
+
+	protected static $instance;
+	public static function init()
+	{
+			is_null( self::$instance ) AND self::$instance = new self;
+			return self::$instance;
+	}
+
+
 	/**
 	 * Holds the values to be used in the fields callbacks
 	 *
@@ -41,9 +46,29 @@ class HypothesisSettingsPage {
 	 * Start up
 	 */
 	public function __construct() {
+		$this->properties();
+		$this->textdomain();
+
 		add_action( 'admin_menu', array( $this, 'add_plugin_page' ) );
 		add_action( 'admin_init', array( $this, 'page_init' ) );
+		add_action( 'admin_print_footer_scripts', array( $this, 'add_quicktags' ) );
+		add_shortcode( 'pdfviewer', array( $this, 'add_shortcode' ) );
 	}
+
+	/**
+	 *	Load Class Values
+	 */
+	public function properties() {
+		$this->options = get_option( 'wp_hypothesis_options' );
+	}
+
+	/**
+	 *	Load Plugin Textdomain
+	 */
+	public function textdomain() {
+		load_plugin_textdomain( 'hypothesis', FALSE, basename( dirname( __FILE__ ) ) . '/languages/' );
+	}
+
 
 	/**
 	 * Add options page
@@ -75,7 +100,7 @@ class HypothesisSettingsPage {
 	 */
 	public function create_admin_page() {
 		// Set class property.
-		$this->options = get_option( 'wp_hypothesis_options' ); ?>
+		?>
 		<div class="wrap">
 		<form method="post" action="options.php">
 		<?php
@@ -108,6 +133,23 @@ class HypothesisSettingsPage {
 			array( $this, 'settings_section_info' ), // Callback.
 			'hypothesis-setting-admin' // Page.
 		);
+
+		add_settings_field(
+			'hypothesis-base-url',
+			__( 'Hypothesis base URL', 'hypothesis' ),
+			array( $this, 'hypothesis_base_url_callback' ),
+			'hypothesis-setting-admin',
+			'hypothesis_settings_section'
+		);
+
+		add_settings_field(
+			'via-base-url',
+			__( 'Via base URL', 'hypothesis' ),
+			array( $this, 'via_base_url_callback' ),
+			'hypothesis-setting-admin',
+			'hypothesis_settings_section'
+		);
+
 
 		add_settings_field(
 			'highlights-on-by-default',
@@ -215,6 +257,43 @@ class HypothesisSettingsPage {
 				)
 			);
 		}
+
+		add_settings_field(
+			'post_cats_override', // ID.
+			__( 'Disallow on specific post (list of comma-separated categories IDs or names, no spaces)', 'hypothesis' ),
+			array( $this, 'post_cats_override_callback' ), // Callback.
+			'hypothesis-setting-admin', // Page.
+			'hypothesis_content_section'
+		);
+
+		/**
+		 * pdf viewer Settings
+		 */
+		add_settings_section(
+			'hypothesis_pdfviewer_section', // ID.
+			__( 'PDFViewer Settings', 'hypothesis' ), // Title.
+			array( $this, 'settings_section_info' ), // Callback.
+			'hypothesis-setting-admin' // Page.
+		);
+
+		add_settings_field(
+			'tx_width',
+			'Default Width',
+			array( $this, 'text_callback' ),
+			'hypothesis-setting-admin',
+			'hypothesis_pdfviewer_section',
+			array( 'field' => 'tx_width', 'desc' => 'Viewer will use this width if not specified in the shortcode. Accept px or %.' )
+		);
+
+add_settings_field(
+			'tx_height',
+			'Default Height',
+			array( $this, 'text_callback' ),
+			'hypothesis-setting-admin',
+			'hypothesis_pdfviewer_section',
+			array( 'field' => 'tx_height', 'desc' => 'Viewer will use this height if not specified in the shortcode. Accept px or %.' )
+		);
+
 	}
 
 	/**
@@ -225,6 +304,16 @@ class HypothesisSettingsPage {
 	public function sanitize( $input ) {
 		$posttypes = $this->get_posttypes();
 		$new_input = array();
+
+		//print_r($input);
+
+		if ( isset( $input['hypothesis-base-url'] ) ) {
+			$new_input['hypothesis-base-url'] = $input['hypothesis-base-url']; // TODO ? validate ???
+		}
+
+		if ( isset( $input['via-base-url'] ) ) {
+			$new_input['via-base-url'] = $input['via-base-url']; // TODO ? validate ???
+		}
 
 		if ( isset( $input['highlights-on-by-default'] ) ) {
 			$new_input['highlights-on-by-default'] = absint( $input['highlights-on-by-default'] );
@@ -272,6 +361,18 @@ class HypothesisSettingsPage {
 			}
 		}
 
+		if ( isset( $input[ 'post_cats_override' ] ) && '' != $input[ 'post_cats_override' ] ) {
+			$new_input[ 'post_cats_override' ] = explode( ',', esc_attr( $input[ 'post_cats_override' ] ) );
+		}
+
+		if ( isset( $input['tx_width'] ) ) {
+			$new_input['tx_width'] = sanitize_text_field($input['tx_width']);
+		}
+
+		if ( isset( $input['tx_height'] ) ) {
+			$new_input['tx_height'] = sanitize_text_field($input['tx_height']);
+		}
+
 		return $new_input;
 	}
 
@@ -290,6 +391,33 @@ class HypothesisSettingsPage {
 	?>
 		<p><?php esc_attr_e( 'Control where Hypothesis is loaded.', 'hypothesis' ); ?></p>
 	<?php }
+
+	/**
+	 * Callback for 'hypothesis_base_url'.
+	 */
+	public function hypothesis_base_url_callback() {
+		$val = isset( $this->options['hypothesis-base-url'] ) ? esc_attr( $this->options['hypothesis-base-url'] ) : 'https://hypothes.is';
+
+		printf(
+			'<input type="text" id="hypothesis-base-url" name="wp_hypothesis_options[hypothesis-base-url]" value="%s" />',
+			$val
+		);
+
+	}
+
+	/**
+	 * Callback for 'via_base_url'.
+	 */
+	public function via_base_url_callback() {
+		$val = isset( $this->options['via-base-url'] ) ? esc_attr( $this->options['via-base-url'] ) : 'https://via.hypothes.is';
+
+		printf(
+			'<input type="text" id="via-base-url" name="wp_hypothesis_options[via-base-url]" value="%s" />',
+			$val
+		);
+
+	}
+
 
 	/**
 	 * Callback for 'highlights-on-by-default'.
@@ -395,11 +523,85 @@ class HypothesisSettingsPage {
 			esc_attr( $val )
 		);
 	}
+
+	/**
+	 * Callback for 'post_cats_override'.
+	 */
+	public function post_cats_override_callback() {
+
+		$val = isset( $this->options[ 'post_cats_override' ] ) ? esc_attr( implode( ',', $this->options[ 'post_cats_override' ] ) ) : '';
+		printf(
+			'<input type="text" id="post_cats_override" name="wp_hypothesis_options[post_cats_override]" value="%s" />',
+			esc_attr( $val )
+		);
+
+
+	}
+
+	public function text_callback($args) {
+		$field = $args['field'];
+		$desc = $args['desc'];
+
+		$width = !empty($this->options['tx_width']) ? $this->options['tx_width'] : '600';
+		$val = [
+			'tx_width' => $width,
+			'tx_height'=> !empty($this->options['tx_height']) ? $this->options['tx_height'] : ceil($width * 1.414)
+		];
+
+		printf(
+				'<input type="text" name="wp_hypothesis_options[%1$s]" class="regular-text" value="%2$s" /><span class="description"> %3$s</span>',
+				$field, $val[$field], $desc
+		);
+	}
+
+	/**
+	 * Add hypothesis pdf Shortcode Button to Post Editor
+	 */
+	public function add_quicktags() {
+		if ( wp_script_is('quicktags') ){
+			$width = $this->options['tx_width'];
+			$height = $this->options['tx_height'];
+		?>
+		<script type="text/javascript">
+		QTags.addButton( 'pdfviewer', 'PDF Viewer', '[pdfviewer width="<?php echo $width; ?>" height="<?php echo $height; ?>" ]', '[/pdfviewer]' );
+		</script>
+		<?php
+		}
+	}
+
+	/*
+	 * Add [pdfviewer] shortcode
+	 */
+	public function add_shortcode( $atts, $content = "" ) {
+		if ( !empty($content) && filter_var($content, FILTER_VALIDATE_URL) ) {
+
+			//TODO: filter URL to check if PDF only
+			$atts = shortcode_atts(
+				array(
+					'width' => $this->options['tx_width'],
+					'height' => $this->options['tx_height']
+				),
+				$atts,
+				'pdfviewer'
+			);
+
+			$via_base_url = isset($this->options['via-base-url'])?$this->options['via-base-url']:"https://via.hypothes.is";
+			$pdfjs_url = rtrim($via_base_url, "/") . "/" .$content;
+
+			$pdfjs_iframe = '<iframe class="pdfjs-viewer" width="'.$atts['width'].'" height="'.$atts['height'].'" src="'.$pdfjs_url.'"></iframe> ';
+
+			return $pdfjs_iframe;
+
+		} else {
+			return 'Invalid URL for PDF Viewer';
+		}
+	}
+
 }
 
-if ( is_admin() ) {
-	$hypothesis_settings_page = new HypothesisSettingsPage();
-}
+// if ( is_admin() ) {
+// 	$hypothesis_settings_page = new HypothesisSettingsPage();
+// }
 
 /**
  * Add Hypothesis based on conditions set in the plugin settings.
@@ -410,7 +612,9 @@ add_action( 'wp', 'add_hypothesis' );
  * Wrapper for the primary Hypothesis wp_enqueue call.
  */
 function enqueue_hypothesis() {
-	wp_enqueue_script( 'hypothesis', 'https://hypothes.is/embed.js', array(), false, true );
+	$options = get_option( 'wp_hypothesis_options' );
+	$h_base_url = isset($options['hypothesis-base-url'])?$options['hypothesis-base-url']:"https://hypothes.is";
+	wp_enqueue_script( 'hypothesis', "$h_base_url/embed.js", array(), false, true );
 }
 
 /**
@@ -422,8 +626,12 @@ function add_hypothesis() {
 
 		// Set defaults if we $options is not set yet.
 	if ( empty( $options ) ) :
+		$default_width = !empty($content_width) ? $content_width : '600';
+		$default_height = ceil($default_width * 1.414);
 		$defaults = array(
 			'highlights-on-by-default' => 1,
+			'tx_width' => $default_width.'px',
+			'tx_height' => $default_height.'px',
 		);
 		add_option( 'wp_hypothesis_options', $defaults );
 	endif;
@@ -441,7 +649,9 @@ function add_hypothesis() {
 	endif;
 
 	if ( isset( $options['serve-pdfs-with-via'] ) ) :
+		$via_base_url = isset($options['via-base-url'])?$options['via-base-url']:"https://via.hypothes.is";
 		wp_enqueue_script( 'pdfs-with-via', plugins_url( 'js/via-pdf.js', __FILE__ ), array(), false, true );
+		wp_add_inline_script('pdfs-with-via', 'var via_base_url="'.$via_base_url.'";', 'before');
 
 		$uploads = wp_upload_dir();
 		wp_localize_script( 'pdfs-with-via', 'HypothesisPDF', array(
@@ -464,13 +674,20 @@ function add_hypothesis() {
 			if ( 'post' === $slug ) {
 				$slug = 'posts'; // Backwards compatibility.
 			}
+			$do_enqueue_hypothesis = false;
 			if ( isset( $options[ "allow-on-$slug" ] ) && is_singular( $posttype ) ) { // Check if Hypothesis is allowed on this post type.
 				if ( isset( $options[ $posttype . '_ids_override' ] ) && ! is_single( $options[ $posttype . '_ids_override' ] ) ) { // Make sure this post isn't in the override list if it exists.
-					enqueue_hypothesis();
+					$do_enqueue_hypothesis = true;
 				} elseif ( ! isset( $options[ $posttype . '_ids_override' ] ) ) {
-					enqueue_hypothesis();
+					$do_enqueue_hypothesis = true;
 				}
 			} elseif ( ! isset( $options[ "allow-on-$slug" ] ) && isset( $options[ $posttype . '_ids_show_h' ] ) && is_single( $options[ $posttype . '_ids_show_h' ] ) ) { // Check if Hypothesis is allowed on this specific post.
+				$do_enqueue_hypothesis = true;
+			}
+			if($do_enqueue_hypothesis && 'posts' === $slug && isset( $options[ 'post_cats_override' ] ) && has_category( $options[ 'post_cats_override' ] ) ) {
+				$do_enqueue_hypothesis = false;
+			}
+			if($do_enqueue_hypothesis) {
 				enqueue_hypothesis();
 			}
 		} elseif ( 'page' === $slug ) {
