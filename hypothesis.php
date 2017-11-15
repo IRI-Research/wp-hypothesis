@@ -563,7 +563,7 @@ add_settings_field(
 			$height = $this->options['tx_height'];
 		?>
 		<script type="text/javascript">
-		QTags.addButton( 'pdfviewer', 'PDF Viewer', '[pdfviewer width="<?php echo $width; ?>" height="<?php echo $height; ?>" ]', '[/pdfviewer]' );
+		QTags.addButton( 'pdfviewer', 'PDF Viewer', '[pdfviewer width="<?php echo $width; ?>" height="<?php echo $height; ?>" url="" ]', '[/pdfviewer]' );
 		</script>
 		<?php
 		}
@@ -573,22 +573,29 @@ add_settings_field(
 	 * Add [pdfviewer] shortcode
 	 */
 	public function add_shortcode( $atts, $content = "" ) {
-		if ( !empty($content) && filter_var($content, FILTER_VALIDATE_URL) ) {
 
-			//TODO: filter URL to check if PDF only
-			$atts = shortcode_atts(
-				array(
-					'width' => $this->options['tx_width'],
-					'height' => $this->options['tx_height']
-				),
-				$atts,
-				'pdfviewer'
-			);
+		$atts = shortcode_atts(
+			array(
+				'width' => $this->options['tx_width'],
+				'height' => $this->options['tx_height'],
+				'url' => ''
+			),
+			$atts,
+			'pdfviewer'
+		);
+
+		$url = isset($atts['url'])?$atts['url']:'';
+
+		if ( !empty($url) && filter_var($url, FILTER_VALIDATE_URL) ) {
 
 			$via_base_url = isset($this->options['via-base-url'])?$this->options['via-base-url']:"https://via.hypothes.is";
-			$pdfjs_url = rtrim($via_base_url, "/") . "/" .$content;
+			$pdfjs_url = rtrim($via_base_url, "/") . "/" .$url;
 
 			$pdfjs_iframe = '<iframe class="pdfjs-viewer" width="'.$atts['width'].'" height="'.$atts['height'].'" src="'.$pdfjs_url.'"></iframe> ';
+
+			if(!empty($content)) {
+				$pdfjs_iframe = "<a href=\"$url\" target=\"_blank\" rel=\"noreferrer,noopener\" >$content</a><br><br>$pdfjs_iframe";
+			}
 
 			return $pdfjs_iframe;
 
